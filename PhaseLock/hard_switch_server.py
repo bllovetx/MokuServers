@@ -145,6 +145,14 @@ class HardSwitchServer:
         # call 1064 step
         return self.step_phase_1064(latter-self._curPhase)
 
+    def set_phase_780(self, phase) -> bool:
+        return self.set_phase_1064(
+            self._convert_780_to_1064(phase)
+        )
+    
+    def set_phase_1064(self, phase) -> bool:
+        return self.step_phase_1064(phase - self._curPhase)
+
     def step_phase_780(self, step) -> bool:
         # convert to 1064
         return self.step_phase_1064(self._convert_780_to_1064(step))
@@ -266,6 +274,7 @@ with HardSwitchServer(
     # )
     mokuServer.step_phase_780(30)
     time.sleep(60)
+    mokuServer.step_phase_780(-30)
 
 
 
