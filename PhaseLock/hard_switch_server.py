@@ -5,7 +5,7 @@ Warning: this server only work when firmware properly configed in gui
 from moku.instruments import MultiInstrument
 from moku.instruments import WaveformGenerator, LockInAmp, PIDController
 from moku.exceptions import StreamException, MokuException
-# from sipyco.pc_rpc import simple_server_loop
+from sipyco.pc_rpc import simple_server_loop
 
 import copy
 import logging
@@ -116,9 +116,22 @@ class HardSwitchServer:
             self._panelData = None
             self._dataUpdated = False
             self._panelThread = threading.Thread(target=self._panel, daemon=True)
+            # setup monitor panel
+            plt.ion()
+            plt.show()
+            plt.grid(visible=True)
+            plt.ylim([-1, 1])
+            plt.xlim([-monitorSpan/2, monitorSpan/2])
+            self._line1, = plt.plot([],label="phase")
+            self._line2, = plt.plot([],label="piezo output")
+            # Configure labels for axes
+            self._ax = plt.gca()
+            self._ax.legend(handles=[self._line1, self._line2])
+            plt.xlabel("Time [Second]")
+            plt.ylabel("Amplitude [Volt]")
         ## start
+            self._panelThread.start()
         self._monitorThread.start()
-        self._panelThread.start()
 
         print("finish initialization!")
         self._logger.info("initialization success")
@@ -219,19 +232,6 @@ class HardSwitchServer:
        
 
     def _panel(self):
-        # setup monitor panel
-        plt.ion()
-        plt.show()
-        plt.grid(visible=True)
-        plt.ylim([-1, 1])
-        plt.xlim([-monitorSpan/2, monitorSpan/2])
-        self._line1, = plt.plot([],label="phase")
-        self._line2, = plt.plot([],label="piezo output")
-        # Configure labels for axes
-        self._ax = plt.gca()
-        self._ax.legend(handles=[self._line1, self._line2])
-        plt.xlabel("Time [Second]")
-        plt.ylabel("Amplitude [Volt]")
         # start loop:
         while not self._monitorStop.is_set():
             if self._dataUpdated:
@@ -266,15 +266,13 @@ class HardSwitchServer:
 with HardSwitchServer(
     phaseThreshold=0.3, outThreshold=0.85, showMonitor=True
 ) as mokuServer:
-    # simple_server_loop(
-    #     {
-    #         "mokuServer": mokuServer
-    #     },
-    #     "192.168.50.81", 41102
-    # )
-    mokuServer.step_phase_780(30)
-    time.sleep(60)
-    mokuServer.step_phase_780(-30)
+    mokuServer.set_phase_780(0)
+    simple_server_loop(
+        {
+            "mokuServer": mokuServer
+        },
+        "192.168.50.84", 41103
+    )
 
 
 
