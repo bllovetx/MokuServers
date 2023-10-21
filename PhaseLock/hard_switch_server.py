@@ -201,6 +201,11 @@ class HardSwitchServer:
         while not self._monitorStop.is_set():
             # fetch data
             tempdata = self._pid.get_data()
+            # check validation of tempdata(TODO: use try if this still not work)
+            if tempdata['ch1'] == None:
+                self._logger.warning("failed to get data from moku")
+                print(tempdata)
+                continue
             # check phaselock(2 threshold)
             # if outof threshold:
                 # log warning
