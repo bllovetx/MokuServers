@@ -24,6 +24,9 @@ maxStep = 30 #degree
 monitorSpan = 1 #s
 phaseBrokenPanelTime = 20 # s(if phase broken, data will be shown on panel for this period of time)
 panelUpdateInterval = 3 #s
+setPhaseLockTimeout = 1 #s
+getDataLockTImeout = 3 #s
+panelDataLockTimeout = 0.5#s
 
 # Setup logging and data saving
 _currentPath = os.path.dirname(os.path.abspath(__file__))
@@ -112,8 +115,10 @@ class HardSwitchServer:
         self._monitorStop: threading.Event = threading.Event()
         self._monitorStop.clear()
         self._monitorThread = threading.Thread(target=self._monitor, daemon=True)
+        self._mokuLock: threading.Lock = threading.Lock()
         if self._showMonitor:
             self._panelData = None
+            self._panelDataLock: threading.Lock = threading.Lock()
             self._dataUpdated = False
             self._panelThread = threading.Thread(target=self._panel, daemon=True)
             # setup monitor panel
@@ -176,6 +181,10 @@ class HardSwitchServer:
         stages = 1 if abs(step) <= maxStep else ceil(abs(step)/maxStep)
         stepi = step/stages
         # apply
+        # <MOKULOCK start>
+        if not self._mokuLock.acquire(timeout=setPhaseLockTimeout):
+            self._logger.error("failed to aquire moku lock while setting phase")
+            return False
         for i in range(stages):
             self._curPhase += stepi
             tempPhase = self._oppositePhase.set_demodulation(
@@ -188,6 +197,8 @@ class HardSwitchServer:
                 success = False
             # update _curphase
             self._curPhase = tempPhase
+        self._mokuLock.release()
+        # <MOKULOCK end>
         return success
 
     def get_phase_1064(self):
@@ -199,8 +210,13 @@ class HardSwitchServer:
         lastTime = time.time()
         # start loop:
         while not self._monitorStop.is_set():
-            # fetch data
+            # fetch data <MOKULOCK start>
+            if not self._mokuLock.acquire(timeout=getDataLockTImeout):
+                self._logger.warning("monitor failed to acquire moku lock while getting data")
+                continue
             tempdata = self._pid.get_data()
+            self._mokuLock.release()
+            # <MOKULOCK end>
             # check validation of tempdata(TODO: use try if this still not work)
             if tempdata['ch1'] == None:
                 self._logger.warning("failed to get data from moku")
@@ -220,9 +236,17 @@ class HardSwitchServer:
             if isBroken:
                 # require panel update in urgent manner
                 if self._showMonitor:
-                    self._panelData = copy.deepcopy(tempdata)
-                    self._dataUpdated = True
-                    lastTime += phaseBrokenPanelTime
+                    # <DATALOCK start>
+                    if not self._panelDataLock.acquire(timeout=panelDataLockTimeout):
+                        # warning and giveup
+                        self._logger.warning("monitor failed to acquire lock while pass data to panel")
+                    else:
+                        # pass data in urgent manner
+                        self._panelData = copy.deepcopy(tempdata)
+                        self._panelDataLock.release()
+                    # <DATALOCK end>
+                        self._dataUpdated = True
+                        lastTime += phaseBrokenPanelTime
                 # save to file
                 np.save(_data_path+"/MonotorWarning_"+time.strftime("%Y%m%d-%H%M%S")+".npy", tempdata)
             # update monitor pannelData if showMonitor(and curTime-lastTime enough), update label
@@ -230,9 +254,17 @@ class HardSwitchServer:
             if self._showMonitor and (not self._dataUpdated):
                 curTime = time.time()
                 if curTime - lastTime > panelUpdateInterval:
-                    self._panelData = copy.deepcopy(tempdata)
-                    self._dataUpdated = True
-                    lastTime = curTime
+                    # <DATALOCK start>
+                    if not self._panelDataLock.acquire(timeout=panelDataLockTimeout):
+                        # warning and giveup
+                        self._logger.warning("monitor failed to acquire lock while pass data to panel")
+                    else:
+                        # pass data and update time
+                        self._panelData = copy.deepcopy(tempdata)
+                        self._panelDataLock.release()
+                    # <DATALOCK end>
+                        self._dataUpdated = True
+                        lastTime = curTime
         # handle stop
        
 
@@ -240,14 +272,19 @@ class HardSwitchServer:
         # start loop:
         while not self._monitorStop.is_set():
             if self._dataUpdated:
-                # deep copy and clear flag(can use lock to avoid copy)
-                tempdata = copy.deepcopy(self._panelData)
-                self._dataUpdated = False
-                # update panel
-                self._line1.set_ydata(tempdata['ch1'])
-                self._line2.set_ydata(tempdata['ch2'])
-                self._line1.set_xdata(tempdata['time'])
-                self._line2.set_xdata(tempdata['time'])
+                # <DATALOCK start>
+                if not self._panelDataLock.acquire(timeout=panelDataLockTimeout):
+                    self._logger.warning("panel failed to acquire lock during updating data")
+                else:
+                    # tempdata = copy.deepcopy(self._panelData)
+                    self._dataUpdated = False
+                    # update panel
+                    self._line1.set_ydata(self._panelData['ch1'])
+                    self._line2.set_ydata(self._panelData['ch2'])
+                    self._line1.set_xdata(self._panelData['time'])
+                    self._line2.set_xdata(self._panelData['time'])
+                    self._panelDataLock.release()
+                # <DATALOCK end>
             # sleep
             mypause(panelUpdateInterval)
         # handle stop
